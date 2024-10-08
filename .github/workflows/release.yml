@@ -1,0 +1,83 @@
+name: RELEASE
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  Build:
+    name: Build and publish Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull project
+        uses: actions/checkout@v3
+
+      - name: Build image
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/core:release -f deployments/Dockerfile .
+
+      - name: Create .env file if not exists
+        run: |
+          if [ ! -f .env ]; then
+            echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
+            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
+          fi
+
+      - name: Login to DockerHub
+        run: echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+
+      - name: Publish image to DockerHub
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/core:release
+
+  Deploy:
+    name: Deploy the project to the server
+    needs: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull project
+        uses: actions/checkout@v3
+
+      - name: Remove old code
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.SSH_HOST_RELEASE }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY_RELEASE }}
+          script: |
+            rm -rf /root/dev/core/deployments
+
+      - name: Send docker-compose file to remote server
+        uses: appleboy/scp-action@v0.1.5
+        with:
+          host: ${{ secrets.SSH_HOST_RELEASE }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY_RELEASE }}
+          source: ./deployments/docker-compose.release.yml
+          target: /root/dev/core
+
+      - name: Create .env file if not exists
+        run: |
+          if [ ! -f .env ]; then
+            echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > .env
+            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
+            echo "DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}" >> .env
+          fi
+
+      - name: Send .env file to remote server
+        uses: appleboy/scp-action@v0.1.5
+        with:
+          host: ${{ secrets.SSH_HOST_RELEASE }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY_RELEASE }}
+          source: .env
+          target: /root/dev/core/deployments
+
+      - name: Restart container
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.SSH_HOST_RELEASE }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY_RELEASE }}
+          script: |
+            cd /root/dev/core/deployments
+            docker pull $DOCKER_USERNAME/core:release
+            docker-compose -f docker-compose.release.yml up --build -d

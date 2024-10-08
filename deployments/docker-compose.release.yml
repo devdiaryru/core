@@ -1,0 +1,18 @@
+version: '3.7'
+
+networks:
+  monitoring:
+    driver: bridge
+
+services:
+  devdiary-core-release:
+    container_name: devdiary_core_release
+    image: $DOCKER_USERNAME/core:release
+    restart: always
+    ports:
+      - '8080:8080'
+    volumes:
+      - ../logs:/logs
+    env_file: /root/dev/core/deployments/.env
+    networks:
+      - monitoring
